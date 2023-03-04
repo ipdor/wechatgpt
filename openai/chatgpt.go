@@ -5,37 +5,43 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	log "github.com/sirupsen/logrus"
-	"github.com/wechatgpt/wechatbot/config"
 	"io"
 	"io/ioutil"
 	"net/http"
 	"strings"
+
+	log "github.com/sirupsen/logrus"
+	"github.com/wechatgpt/wechatbot/config"
 )
+
+type STMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type Choice struct {
+	Index        int       `json:"index"`
+	Message      STMessage `json:"message"`
+	FinishReason string    `json:"finish_reason"`
+}
 
 // ChatGPTResponseBody 请求体
 type ChatGPTResponseBody struct {
-	ID      string                   `json:"id"`
-	Object  string                   `json:"object"`
-	Created int                      `json:"created"`
-	Model   string                   `json:"model"`
-	Choices []map[string]interface{} `json:"choices"`
-	Usage   map[string]interface{}   `json:"usage"`
+	ID      string                 `json:"id"`
+	Object  string                 `json:"object"`
+	Created int                    `json:"created"`
+	Choices []Choice               `json:"choices"`
+	Usage   map[string]interface{} `json:"usage"`
 }
 
 type ChatGPTErrorBody struct {
-	Error   map[string]interface{}   `json:"error"`
+	Error map[string]interface{} `json:"error"`
 }
 
 // ChatGPTRequestBody 响应体
 type ChatGPTRequestBody struct {
-	Model            string  `json:"model"`
-	Prompt           string  `json:"prompt"`
-	MaxTokens        int     `json:"max_tokens"`
-	Temperature      float32 `json:"temperature"`
-	TopP             int     `json:"top_p"`
-	FrequencyPenalty int     `json:"frequency_penalty"`
-	PresencePenalty  int     `json:"presence_penalty"`
+	Model    string      `json:"model"`
+	Messages []STMessage `json:"messages"`
 }
 
 // Completions https://api.openai.com/v1/completions
@@ -59,20 +65,28 @@ type ChatGPTRequestBody struct {
 //	});
 //
 // Completions sendMsg
+var messages []STMessage
+
 func Completions(msg string) (*string, error) {
 	apiKey := config.GetOpenAiApiKey()
 	if apiKey == nil {
 		return nil, errors.New("未配置apiKey")
 	}
+	//清空指令
+	if strings.ToLower(msg) == "/clear" {
+		messages = make([]STMessage, 0)
+		strOK := "已清空上下文"
+		return &strOK, nil
+	}
+
+	messages = append(messages, STMessage{
+		Role:    "user",
+		Content: msg,
+	})
 
 	requestBody := ChatGPTRequestBody{
-		Model:            "text-davinci-003",
-		Prompt:           msg,
-		MaxTokens:        4000,
-		Temperature:      0.7,
-		TopP:             1,
-		FrequencyPenalty: 0,
-		PresencePenalty:  0,
+		Model:    "gpt-3.5-turbo",
+		Messages: messages,
 	}
 	requestData, err := json.Marshal(requestBody)
 
@@ -81,7 +95,7 @@ func Completions(msg string) (*string, error) {
 		return nil, err
 	}
 	log.Printf("request openai json string : %v", string(requestData))
-	req, err := http.NewRequest("POST", "https://api.openai.com/v1/completions", bytes.NewBuffer(requestData))
+	req, err := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(requestData))
 	if err != nil {
 		log.Println(err)
 		return nil, err
@@ -116,11 +130,16 @@ func Completions(msg string) (*string, error) {
 	var reply string
 	if len(gptResponseBody.Choices) > 0 {
 		for _, v := range gptResponseBody.Choices {
-			reply = v["text"].(string)
+			message := v.Message
+			messages = append(messages, message)
+			reply = strings.TrimSpace(message.Content)
+			if reply == "" {
+				reply = "【API返回了空内容。如果多次出现请清空上下文】"
+			}
 			break
 		}
-	} 
-	
+	}
+
 	gptErrorBody := &ChatGPTErrorBody{}
 	err = json.Unmarshal(body, gptErrorBody)
 	if err != nil {
@@ -128,7 +147,7 @@ func Completions(msg string) (*string, error) {
 		return nil, err
 	}
 
-	if (len(reply) == 0) {
+	if len(reply) == 0 {
 		reply = gptErrorBody.Error["message"].(string)
 	}
 

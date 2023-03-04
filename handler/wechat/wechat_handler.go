@@ -2,12 +2,13 @@ package wechat
 
 import (
 	"fmt"
+	"strings"
+
 	"github.com/eatmoreapple/openwechat"
 	log "github.com/sirupsen/logrus"
 	"github.com/wechatgpt/wechatbot/config"
 	"github.com/wechatgpt/wechatbot/openai"
 	"github.com/wechatgpt/wechatbot/utils"
-	"strings"
 )
 
 var _ MessageHandlerInterface = (*GroupMessageHandler)(nil)
@@ -44,6 +45,15 @@ func (gmh *GroupMessageHandler) ReplyText(msg *openwechat.Message) error {
 			return nil
 		}
 		requestText = strings.TrimSpace(splitItems[1])
+	}
+
+	QUOTAMARK := "\n- - - - - - - - - - - - - - -\n"
+	ind := strings.Index(requestText, QUOTAMARK)
+	if ind >= 0 {
+		requestText = strings.TrimSpace(requestText[ind+len(QUOTAMARK):])
+	}
+	if requestText == "" {
+		return nil
 	}
 
 	log.Println("问题：", requestText)
